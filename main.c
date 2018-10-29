@@ -8,23 +8,23 @@
 
 unsigned char mem[0xFF] = {0};
 unsigned char reg[0x0F] = {0};
-unsigned char progc = 0;
+unsigned char program_counter = 0;
 
-struct instruction {
-    unsigned char reg    : 4; // Low nib
-    unsigned char opcode : 4; // High nib
+struct Instruction {
+    unsigned char reg    : 4; // Low split
+    unsigned char opcode : 4; // High split
     union {
         struct {
-            unsigned char b : 4; // Low nib
-            unsigned char a : 4; // High nib
-        } nibble;
+            unsigned char hi : 4; // Low split
+            unsigned char lo : 4; // High split
+        } split;
         unsigned char byte : 8;
     } args;
-} latest_instruct;
+} instruction;
 
 int step();
 
-char p_nib(unsigned char num) {
+char nibble_to_hex(unsigned char num) {
     if (num <= 9) {
         return num + '0';
     } else {
@@ -44,92 +44,109 @@ int main (int argc, char** argv) {
 }
 
 int step() {
-    memcpy(&latest_instruct, &mem[progc], sizeof(struct instruction));
-    //fprintf(stderr, "CODE: %02hhX %02hhX\n", *(unsigned char*)&latest_instruct, *((unsigned char*)&latest_instruct + 1));
-    //fprintf(stderr, "OP: %c\n", p_nib(latest_instruct.opcode));
-    //fprintf(stderr, "RG: %c\n", p_nib(latest_instruct.reg));
-    //fprintf(stderr, "BYTE: %02hhx\n", latest_instruct.args.byte);
-    switch (latest_instruct.opcode) {
-        case 0x1: // Load
-            reg[latest_instruct.reg] =
-                mem[latest_instruct.args.byte];
-            fprintf(stderr, "LOD REG %c WITH VALUE AT %02hhX (%02hhX)\n", p_nib(latest_instruct.reg), latest_instruct.args.byte, mem[latest_instruct.args.byte]);
+    memcpy(&instruction, &mem[program_counter], sizeof(struct Instruction));
+
+    fprintf(stderr, "\nCODE: %02hhX%02hhX", *(unsigned char*)&instruction, *((unsigned char*)&instruction + 1));
+    fprintf(stderr, " PC: %02hhX", program_counter);
+    fprintf(stderr, " OP: %c", nibble_to_hex(instruction.opcode));
+    fprintf(stderr, " RG: %c", nibble_to_hex(instruction.reg));
+    fprintf(stderr, " NIB: [A:%c, B:%c]", nibble_to_hex(instruction.args.split.lo), nibble_to_hex(instruction.args.split.hi));
+    fprintf(stderr, " BYTE: %02hhx\n", instruction.args.byte);
+    fprintf(stderr, "  ");
+
+    switch (instruction.opcode) {
+        case 0x1: // Load from location
+            reg[instruction.reg] =
+                mem[instruction.args.byte];
+            fprintf(stderr, "Load reg %c with value at %02hhX (%02hhX)\n", nibble_to_hex(instruction.reg), instruction.args.byte, mem[instruction.args.byte]);
             break;
-        case 0x2: // Load
-            reg[latest_instruct.reg] = 
-                latest_instruct.args.byte;
-            fprintf(stderr, "LOD REG %c WITH %02hhX\n", p_nib(latest_instruct.reg), latest_instruct.args.byte);
+        case 0x2: // Load from adjacent
+            reg[instruction.reg] = 
+                instruction.args.byte;
+            fprintf(stderr, "Load reg %c with %02hhX\n", nibble_to_hex(instruction.reg), instruction.args.byte);
             break;
-        case 0x3: // Store
-            fprintf(stderr, "STR REG %c (%02hhX) TO %02hhX\n", p_nib(latest_instruct.reg), reg[latest_instruct.reg], latest_instruct.args.byte);
-            mem[latest_instruct.args.byte] = 
-                reg[latest_instruct.reg];
+        case 0x3: // Store to memory
+            fprintf(stderr, "Store reg %c (%02hhX) to %02hhX\n", nibble_to_hex(instruction.reg), reg[instruction.reg], instruction.args.byte);
+            mem[instruction.args.byte] = 
+                reg[instruction.reg];
             break;
-        case 0x4: // Move
-            fprintf(stderr, "MOV REG %c(%02hhX) TO REG %c(%02hhX)\n", 
-                    p_nib(latest_instruct.args.nibble.a),
-                    reg[latest_instruct.args.nibble.a],
-                    p_nib(latest_instruct.args.nibble.b),
-                    reg[latest_instruct.args.nibble.b]);
-            reg[latest_instruct.args.nibble.b] = 
-                reg[latest_instruct.args.nibble.a];
+        case 0x4: // Move/Copy register 
+            fprintf(stderr, "Move reg %c (%02hhX) to reg %c (%02hhX)\n", 
+                    nibble_to_hex(instruction.args.split.lo),
+                    reg[instruction.args.split.lo],
+                    nibble_to_hex(instruction.args.split.hi),
+                    reg[instruction.args.split.hi]);
+            reg[instruction.args.split.hi] = 
+                reg[instruction.args.split.lo];
             break;
         case 0x5: // Add
-            fprintf(stderr, "ADD REG %c = REG %c(%02hhX) + REG %c(%02hhX) = %02hhX\n", 
-                    p_nib(latest_instruct.reg),
-                    p_nib(latest_instruct.args.nibble.a),
-                    reg[latest_instruct.args.nibble.a],
-                    p_nib(latest_instruct.args.nibble.b),
-                    reg[latest_instruct.args.nibble.b],
-                    (unsigned char)(reg[latest_instruct.args.nibble.a] + reg[latest_instruct.args.nibble.b]));
-            reg[latest_instruct.reg] = 
-                reg[latest_instruct.args.nibble.a] + 
-                reg[latest_instruct.args.nibble.b];
+            fprintf(stderr, "Add reg %c (%02hhX) + reg %c (%02hhX) -> reg %c (%02hhX)\n", 
+                    nibble_to_hex(instruction.args.split.lo),
+                    reg[instruction.args.split.lo],
+                    nibble_to_hex(instruction.args.split.hi),
+                    reg[instruction.args.split.hi],
+                    nibble_to_hex(instruction.reg),
+                    (unsigned char)(reg[instruction.args.split.lo] + reg[instruction.args.split.hi]));
+            reg[instruction.reg] = 
+                reg[instruction.args.split.lo] + 
+                reg[instruction.args.split.hi];
             break;
         case 0x7: // Or
-            reg[latest_instruct.reg] = 
-                reg[latest_instruct.args.nibble.a] | 
-                reg[latest_instruct.args.nibble.b];
+            reg[instruction.reg] = 
+                reg[instruction.args.split.lo] | 
+                reg[instruction.args.split.hi];
             break;
         case 0x8: // And
-            reg[latest_instruct.reg] = 
-                reg[latest_instruct.args.nibble.a] & 
-                reg[latest_instruct.args.nibble.b];
+            reg[instruction.reg] = 
+                reg[instruction.args.split.lo] & 
+                reg[instruction.args.split.hi];
             break;
         case 0x9: // Xor
-            reg[latest_instruct.reg] = 
-                reg[latest_instruct.args.nibble.a] != 
-                reg[latest_instruct.args.nibble.b];
+            reg[instruction.reg] = 
+                reg[instruction.args.split.lo] != 
+                reg[instruction.args.split.hi];
             break;
         case 0xA: // Rotate right
-            reg[latest_instruct.reg] = 
-                reg[latest_instruct.reg] >> 
-                latest_instruct.args.nibble.b;
+            reg[instruction.reg] = 
+                reg[instruction.reg] >> 
+                instruction.args.split.hi;
             break;
         case 0xB: // Jump
-            fprintf(stderr, "JMP IF REG %c(%02hhX) == 0(%02hhX) TO %02hhX\n", 
-                    p_nib(latest_instruct.reg),
-                    reg[latest_instruct.reg],
-                    reg[0], reg[latest_instruct.args.byte]);
-            if (reg[latest_instruct.reg] == reg[0x0])
-                progc = latest_instruct.args.byte - 0x02; //Skip the increment!
+            fprintf(stderr, "Jump to %02hhX\n if reg %c (%02hhX) == reg 0(%02hhX) ", 
+                    nibble_to_hex(instruction.reg),
+                    reg[instruction.args.byte],
+                    reg[instruction.reg],
+                    reg[0]);
+            if (reg[instruction.reg] == reg[0x0])
+                program_counter = instruction.args.byte - 0x02; //Skip the increment!
             break;
         case 0x0: // Halt
         case 0xC: // Halt
             fprintf(stderr, "Halted.\n");
             return 0;
             break;
-        case 0xD: //Special, output to display
-            fprintf(stderr, "PUT ");
-            putchar(reg[latest_instruct.reg]);
+        case 0xD: //Special, copy register to display
+            fprintf(stderr, "Putchar from reg %c (%02hhX) [", nibble_to_hex(instruction.reg), reg[instruction.reg]);
+            putchar(reg[instruction.reg]);
             fflush(stdout);
-            fprintf(stderr, "\n");
+            fprintf(stderr, "]\n");
+            break;
+        case 0xE:
+            fprintf(stderr, "Getchar to reg %c\n> ", nibble_to_hex(instruction.reg));
+            reg[instruction.reg] = getchar();
+            fprintf(stderr, "Got char %02hhX \n", reg[instruction.reg]);
+            break;
+        case 0xF:
+            fprintf(stderr, "Debug reg %c [ ", nibble_to_hex(instruction.reg));
+            printf("0x%02hhX", reg[instruction.reg]);
+            fflush(stdout);
+            fprintf(stderr, " ]\n");
             break;
         default:
-            fprintf(stderr, "Invalid opcode: %X\n", latest_instruct.opcode);
+            fprintf(stderr, "Invalid opcode: %X\n", instruction.opcode);
             exit(EXIT_FAILURE);
     }
-    progc += sizeof(struct instruction);
-    if (progc > 0xF0) return 0;
+    program_counter += sizeof(struct Instruction);
+    if (program_counter > 0xF0) return 0;
     return 1;
 }
